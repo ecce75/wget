@@ -19,8 +19,9 @@ import (
 )
 
 var downloadedURLs map[string]bool
+var ExcludeList []string
 
-func DownloadFile(url, filename string, path, rateLimit *string, isMirroring bool) error {
+func DownloadFile(url, filename string, path, rateLimit *string, isMirroring bool, rejectList []string) error {
 	if url == "" {
 		return nil
 	}
@@ -108,10 +109,16 @@ func DownloadFile(url, filename string, path, rateLimit *string, isMirroring boo
 
 			// Download each URL found in the HTML/CSS file
 			for _, u := range urls {
-				fmt.Println(u)
 				if _, exists := downloadedURLs[url]; !exists {
+					for _, ext := range rejectList {
+						if strings.HasSuffix(u, ext) {
+							fmt.Println("HERE", u, ext)
+							return nil // Skip downloading
+						}
+					}
 					downloadedURLs[u] = true
-					DownloadFile(u, ppath.Base(u), path, rateLimit, true)
+					DownloadFile(u, ppath.Base(u), path, rateLimit, true, rejectList)
+
 				}
 			}
 		}
@@ -122,7 +129,7 @@ func DownloadFile(url, filename string, path, rateLimit *string, isMirroring boo
 	return nil
 }
 
-func DownloadFileInBackground(url, filename string, path, rateLimit *string, wg *sync.WaitGroup) {
+func DownloadFileInBackground(url, filename string, path, rateLimit *string, wg *sync.WaitGroup, rejectList []string) {
 	defer wg.Done()
 	// Open log file
 	logFile, err := os.OpenFile("wget-log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
@@ -139,12 +146,12 @@ func DownloadFileInBackground(url, filename string, path, rateLimit *string, wg 
 	startTime := time.Now()
 	fmt.Printf("start at %s\n", startTime.Format("2006-01-02 15:04:05"))
 
-	if err := DownloadFile(url, filename, path, rateLimit, false); err != nil {
+	if err := DownloadFile(url, filename, path, rateLimit, false, rejectList); err != nil {
 		fmt.Fprintf(logFile, "Error downloading file: %v\n", err)
 	}
 }
 
-func DownloadFromInput(inputFile string, path, rateLimit *string) {
+func DownloadFromInput(inputFile string, path, rateLimit *string, rejectList []string) {
 	urls, err := ReadURLsFromFile(inputFile)
 	if err != nil {
 		fmt.Printf("Error reading URLs from file: %v\n", err)
@@ -159,7 +166,7 @@ func DownloadFromInput(inputFile string, path, rateLimit *string) {
 			// Assuming the filename is derived from the URL
 			filename := filepath.Base(url)
 			fmt.Println(url, filename, *path, *rateLimit)
-			if err := DownloadFile(url, filename, path, rateLimit, false); err != nil {
+			if err := DownloadFile(url, filename, path, rateLimit, false, rejectList); err != nil {
 				fmt.Printf("Error downloading file from %s: %v\n", url, err)
 			} else {
 				fmt.Printf("finished %s\n", filename)
@@ -258,6 +265,12 @@ func addURL(rawurl string, baseURL *url.URL, urls *[]string) {
 	resolvedURL, err := url.Parse(rawurl)
 	if err != nil {
 		return
+	}
+	// Check for excluded directories
+	for _, dir := range ExcludeList {
+		if strings.HasPrefix(resolvedURL.Path, strings.TrimPrefix(dir, "/")) {
+			return // Skip adding this URL
+		}
 	}
 	resolvedURL = baseURL.ResolveReference(resolvedURL)
 	*urls = append(*urls, resolvedURL.String())

@@ -50,6 +50,16 @@ func main() {
 	// 	filename = filepath.Base(URL)
 	// }
 
+	var rejectList []string
+
+	if *reject != "" {
+		rejectList = strings.Split(*reject, ",")
+	}
+
+	if *exclude != "" {
+		funcs.ExcludeList = strings.Split(*exclude, ",")
+	}
+
 	filename := *output
 	if *output == "" {
 		parsedURL, err := url.Parse(URL)
@@ -76,7 +86,7 @@ func main() {
 		if err1 != nil {
 			log.Fatalf("Failed to create directory: %v", err)
 		}
-		funcs.DownloadFile(URL, filename, &domainPath, rateLimit, true)
+		funcs.DownloadFile(URL, filename, &domainPath, rateLimit, true, rejectList)
 		// End time
 		endTime := time.Now()
 		fmt.Printf("finished at %s\n", endTime.Format("2006-01-02 15:04:05"))
@@ -86,7 +96,7 @@ func main() {
 	if *background {
 		var wg sync.WaitGroup
 		wg.Add(1)
-		go funcs.DownloadFileInBackground(URL, filename, path, rateLimit, &wg)
+		go funcs.DownloadFileInBackground(URL, filename, path, rateLimit, &wg, rejectList)
 		fmt.Println("Output will be written to \"wget-log\".")
 		wg.Wait() // Wait for the background task to complete
 		return
@@ -97,12 +107,12 @@ func main() {
 	fmt.Printf("start at %s\n", startTime.Format("2006-01-02 15:04:05"))
 
 	if *inputFile != "" {
-		funcs.DownloadFromInput(*inputFile, path, rateLimit)
+		funcs.DownloadFromInput(*inputFile, path, rateLimit, rejectList)
 	}
 
 	// Download with progress bar
 	if !*mirror {
-		if err := funcs.DownloadFile(URL, filename, path, rateLimit, false); err != nil {
+		if err := funcs.DownloadFile(URL, filename, path, rateLimit, false, rejectList); err != nil {
 			fmt.Printf("Error downloading file: %v\n", err)
 		}
 	}
