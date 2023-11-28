@@ -40,16 +40,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Mirror:", *mirror)
-	fmt.Println("Reject:", *reject)
-	fmt.Println("Exclude:", *exclude)
-
-	// filename := *output
-	// if *output == "" {
-	// 	// Extract filename from URL
-	// 	filename = filepath.Base(URL)
-	// }
-
 	var rejectList []string
 
 	if *reject != "" {
@@ -75,6 +65,9 @@ func main() {
 			filename = filepath.Base(URL)
 		}
 	}
+	// Start time
+	startTime := time.Now()
+	fmt.Printf("start at %s\n", startTime.Format("2006-01-02 15:04:05"))
 
 	if *mirror && URL != "" {
 		domain, err := funcs.GetDomainName(URL)
@@ -99,12 +92,10 @@ func main() {
 		go funcs.DownloadFileInBackground(URL, filename, path, rateLimit, &wg, rejectList)
 		fmt.Println("Output will be written to \"wget-log\".")
 		wg.Wait() // Wait for the background task to complete
-		return
+		endTime := time.Now()
+		fmt.Printf("finished at %s\n", endTime.Format("2006-01-02 15:04:05"))
+		os.Exit(0)
 	}
-
-	// Start time
-	startTime := time.Now()
-	fmt.Printf("start at %s\n", startTime.Format("2006-01-02 15:04:05"))
 
 	if *inputFile != "" {
 		funcs.DownloadFromInput(*inputFile, path, rateLimit, rejectList)
