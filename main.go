@@ -3,8 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 	funcs "wget/functions"
@@ -24,55 +27,84 @@ func main() {
 	// Parse command-line arguments
 	flag.Parse()
 
-	var url string
+	var URL string
 	// Check for URL as positional argument
 	if len(flag.Args()) > 0 {
-		url = flag.Args()[0]
+		URL = flag.Args()[0]
 	}
 
 	// Validate that URL or other required arguments are provided
-	if url == "" && !*mirror && *inputFile == "" {
+	if URL == "" && !*mirror && *inputFile == "" {
 		fmt.Println("Please provide a URL, input file, or use the --mirror flag")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
-	// Access parsed flag values
-	fmt.Println("URL:", url)
-	fmt.Println("Background:", *background)
-	fmt.Println("Output:", *output)
-	fmt.Println("Path:", *path)
-	fmt.Println("Rate Limit:", *rateLimit)
-	fmt.Println("Input File:", *inputFile)
 	fmt.Println("Mirror:", *mirror)
 	fmt.Println("Reject:", *reject)
 	fmt.Println("Exclude:", *exclude)
 
+	// filename := *output
+	// if *output == "" {
+	// 	// Extract filename from URL
+	// 	filename = filepath.Base(URL)
+	// }
+
 	filename := *output
 	if *output == "" {
-		// Extract filename from URL
-		filename = filepath.Base(url)
+		parsedURL, err := url.Parse(URL)
+		if err != nil {
+			fmt.Println("Invalid URL:", err)
+			os.Exit(1)
+		}
+
+		// Set filename to 'index.html' if URL is the root of a website or ends with a slash
+		if parsedURL.Path == "" || strings.HasSuffix(parsedURL.Path, "/") {
+			filename = "index.html"
+		} else {
+			filename = filepath.Base(URL)
+		}
+	}
+
+	if *mirror && URL != "" {
+		domain, err := funcs.GetDomainName(URL)
+		if err != nil {
+			log.Fatal(err)
+		}
+		domainPath := filepath.Join(*path, domain)
+		err1 := os.MkdirAll(domainPath, os.ModePerm)
+		if err1 != nil {
+			log.Fatalf("Failed to create directory: %v", err)
+		}
+		funcs.DownloadFile(URL, filename, &domainPath, rateLimit, true)
+		// End time
+		endTime := time.Now()
+		fmt.Printf("finished at %s\n", endTime.Format("2006-01-02 15:04:05"))
+		os.Exit(0)
 	}
 
 	if *background {
 		var wg sync.WaitGroup
 		wg.Add(1)
-		go funcs.DownloadFileInBackground(url, filename, path, rateLimit, &wg)
+		go funcs.DownloadFileInBackground(URL, filename, path, rateLimit, &wg)
 		fmt.Println("Output will be written to \"wget-log\".")
 		wg.Wait() // Wait for the background task to complete
 		return
 	}
 
-	if *inputFile != "" {
-		funcs.DownloadFromInput(*inputFile, path, rateLimit)
-	}
 	// Start time
 	startTime := time.Now()
 	fmt.Printf("start at %s\n", startTime.Format("2006-01-02 15:04:05"))
 
+	if *inputFile != "" {
+		funcs.DownloadFromInput(*inputFile, path, rateLimit)
+	}
+
 	// Download with progress bar
-	if err := funcs.DownloadFile(url, filename, path, rateLimit); err != nil {
-		fmt.Printf("Error downloading file: %v\n", err)
+	if !*mirror {
+		if err := funcs.DownloadFile(URL, filename, path, rateLimit, false); err != nil {
+			fmt.Printf("Error downloading file: %v\n", err)
+		}
 	}
 
 	// End time

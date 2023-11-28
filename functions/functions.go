@@ -5,16 +5,25 @@ import (
 	"fmt"
 	"github.com/mxk/go-flowrate/flowrate"
 	"github.com/schollz/progressbar/v3"
+	"golang.org/x/net/html"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	ppath "path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
 
-func DownloadFile(url, filename string, path, rateLimit *string) error {
+var downloadedURLs map[string]bool
+
+func DownloadFile(url, filename string, path, rateLimit *string, isMirroring bool) error {
+	if url == "" {
+		return nil
+	}
 	fullPath := filepath.Join(*path, filename)
 	// Make HTTP GET request
 	resp, err := http.Get(url)
@@ -78,8 +87,37 @@ func DownloadFile(url, filename string, path, rateLimit *string) error {
 			return err
 		}
 	}
+
+	// Additional processing for mirroring
+	if isMirroring {
+		if downloadedURLs == nil {
+			downloadedURLs = make(map[string]bool)
+		}
+		contentType := resp.Header.Get("Content-Type")
+		if strings.Contains(contentType, "text/html") || strings.Contains(contentType, "text/css") {
+			file, err := os.Open(fullPath)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			urls, err := ExtractURLs(file, url)
+			if err != nil {
+				return err
+			}
+
+			// Download each URL found in the HTML/CSS file
+			for _, u := range urls {
+				fmt.Println(u)
+				if _, exists := downloadedURLs[url]; !exists {
+					downloadedURLs[u] = true
+					DownloadFile(u, ppath.Base(u), path, rateLimit, true)
+				}
+			}
+		}
+	}
 	// File path
-	fmt.Printf("saving file to: %s%s\n", *path, filename)
+	fmt.Printf("saving file to: %s\n", fullPath)
 	fmt.Printf("Downloaded [%s]\n", url)
 	return nil
 }
@@ -101,12 +139,9 @@ func DownloadFileInBackground(url, filename string, path, rateLimit *string, wg 
 	startTime := time.Now()
 	fmt.Printf("start at %s\n", startTime.Format("2006-01-02 15:04:05"))
 
-	if err := DownloadFile(url, filename, path, rateLimit); err != nil {
+	if err := DownloadFile(url, filename, path, rateLimit, false); err != nil {
 		fmt.Fprintf(logFile, "Error downloading file: %v\n", err)
 	}
-	// End time
-	endTime := time.Now()
-	fmt.Printf("finished at %s\n", endTime.Format("2006-01-02 15:04:05"))
 }
 
 func DownloadFromInput(inputFile string, path, rateLimit *string) {
@@ -124,7 +159,7 @@ func DownloadFromInput(inputFile string, path, rateLimit *string) {
 			// Assuming the filename is derived from the URL
 			filename := filepath.Base(url)
 			fmt.Println(url, filename, *path, *rateLimit)
-			if err := DownloadFile(url, filename, path, rateLimit); err != nil {
+			if err := DownloadFile(url, filename, path, rateLimit, false); err != nil {
 				fmt.Printf("Error downloading file from %s: %v\n", url, err)
 			} else {
 				fmt.Printf("finished %s\n", filename)
@@ -173,4 +208,74 @@ func ReadURLsFromFile(filename string) ([]string, error) {
 		return nil, err
 	}
 	return urls, nil
+}
+
+func ExtractURLs(htmlContent io.Reader, baseURLString string) ([]string, error) {
+	var urls []string
+	doc, err := html.Parse(htmlContent)
+	if err != nil {
+		return nil, err
+	}
+	baseURL, err := url.Parse(baseURLString)
+	if err != nil {
+		return nil, err
+	}
+
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			for _, a := range n.Attr {
+				// Check for URLs in href and src attributes
+				if a.Key == "href" || a.Key == "src" {
+					addURL(a.Val, baseURL, &urls)
+				}
+
+				// Extract URLs from inline CSS in style attributes
+				if a.Key == "style" {
+					extractURLsFromCSS(a.Val, baseURL, &urls)
+				}
+			}
+		}
+
+		// Extract URLs from <style> tags
+		if n.Type == html.ElementNode && n.Data == "style" {
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.TextNode {
+					extractURLsFromCSS(c.Data, baseURL, &urls)
+				}
+			}
+		}
+
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+	}
+	f(doc)
+	return urls, nil
+}
+
+func addURL(rawurl string, baseURL *url.URL, urls *[]string) {
+	resolvedURL, err := url.Parse(rawurl)
+	if err != nil {
+		return
+	}
+	resolvedURL = baseURL.ResolveReference(resolvedURL)
+	*urls = append(*urls, resolvedURL.String())
+}
+
+func extractURLsFromCSS(css string, baseURL *url.URL, urls *[]string) {
+	re := regexp.MustCompile(`url\(\s*(?:'([^']*)'|"([^"]*)"|([^'"\s][^)]*[^'"\s])|([^'"\s]))\s*\)`)
+	matches := re.FindAllStringSubmatch(css, -1)
+	for _, match := range matches {
+		addURL(match[1], baseURL, urls)
+	}
+}
+
+func GetDomainName(siteURL string) (string, error) {
+	parsedURL, err := url.Parse(siteURL)
+	if err != nil {
+		return "", err
+	}
+	// Use Hostname() to extract the domain name
+	return parsedURL.Hostname(), nil
 }

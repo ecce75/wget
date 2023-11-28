@@ -5,6 +5,7 @@ go 1.21.0
 require (
 	github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f
 	github.com/schollz/progressbar/v3 v3.14.1
+	golang.org/x/net v0.18.0
 )
 
 require (
